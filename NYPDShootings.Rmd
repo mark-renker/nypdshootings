@@ -1,0 +1,356 @@
+---
+title: NYPD Shootings Report
+author:
+date:
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = TRUE)
+```
+
+<font size="4">This is a report on New York City shooting incidents from the year 2006 through the year 2023, and it is meant to answer the question around what basic analysis and modeling one can do with a dataset that contains information on shootings in a given area. The report is based on the "<https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD>" URL file from the "<https://catalog.data.gov/dataset>" link that was provided. After loading in the relevant libraries, we will look at a summary of the refined dataset. Then we will do some basic analysis with visualizations before doing some basic modeling.</font> <br>
+
+```{r, fig.width = 8, fig.height = 6, echo=TRUE}
+#Import the required libraries
+library(tidyverse)
+library(stringr)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(hms)
+library(forecast)
+library(tseries)
+```
+
+<br>
+
+<h2 style="text-align: center;">
+
+**Tidying the NYPD Shootings Data**
+
+</h2>
+
+<br>
+
+<font size="4"> In the code snippet and corresponding summary below, the raw dataset has been tidied with OCCUR_DATE, OCCUR_TIME, BORO, STATISTICAL_MURDER_FLAG, VIC_AGE_GROUP, VIC_SEX, VIC_RACE. The variable names seemed understandable so I didn't feel it necessary to change them. I will convert the OCCUR_DATE and OCCUR_TIME variables to date (mdy) and time (hms) objects, respectively. This will make those variables easier to work with during the analysis process.</font>
+
+<br>
+
+```{r, fig.width = 8, fig.height = 6, echo=TRUE}
+#Pull in the NYPD Shootings dataset from the appropriate website link and set it to a new variable.
+nypd_shootings_raw <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+
+#Create a new dataframe that contains the relevant variables from the NYPD shootings dataset.
+nypd_shootings <- nypd_shootings_raw %>% 
+  select(OCCUR_DATE, OCCUR_TIME, BORO, STATISTICAL_MURDER_FLAG, VIC_AGE_GROUP, VIC_SEX, VIC_RACE)
+
+#Change OCCUR_DATE and OCCUR_TIME to the appropriate object types.
+nypd_shootings <- nypd_shootings %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+  mutate(OCCUR_TIME = as_hms(OCCUR_TIME))
+
+#Generate a summary of the revised NYPD Shootings dataset to ensure that the counts and object types are correct for our analysis.
+summary(nypd_shootings)
+```
+
+<br>
+
+<h2 style="text-align: center;">
+
+**Analysis**
+
+</h2>
+
+<br>
+
+<font size="4"> As a first pass at analysis, it seemed interesting to calculate the proportion of murders (or the "murder rate") relative to the total number of shootings. To do this, I accessed the STATISTICAL_MURDER_FLAG column, which contains information on whether a shooting was reported as a murder. The value "TRUE" in this column represents a murder, and "FALSE" indicates there was not a reported murder. The newly created variable "murder_true_count" represents the sum of all of the "TRUE" values in the STATISTICAL_MURDER_FLAG column, indicating the total number of reported murders in the dataset. To calculate the total number of shootings, I simply counted the number of rows in the dataset (as the dataset is a list of shooting incidents) and set that number to the variable "shooting count." The murder rate (named "murder_rate") was calculated by dividing murder_true_count by shooting_count. The "murder_rate" variable returned a value of approximately 0.1934, or roughly 19.3%, indicating that out of the 28,562 shootings in the dataset, 5526 (or roughly 19.3%) were counted as murders.</font> <br>
+
+```{r, fig.width = 8, fig.height = 6, fig.align = 'center', echo = TRUE}
+#Add up the number of TRUE values from STATISTICAL_MURDER_FLAG and divide that number by the number of rows in the nypd_shootings dataset to calculate the murder rate.
+murder_true_count <- sum(nypd_shootings$STATISTICAL_MURDER_FLAG, na.rm = TRUE)
+shooting_count <- nrow(nypd_shootings)
+murder_rate <- murder_true_count/shooting_count
+murder_rate
+```
+
+<br> <font size="4"> Below is a pie chart representation of the murder_true_count to shooting_count proportion. We will look at pie chart representations of other categorical variables in the dataset to achieve a more visually intuitive understanding of the data.</font> <br>
+
+```{r, fig.width = 8, fig.height = 6, fig.align = 'center', echo = TRUE}
+#Set STATISTICAL_MURDER_FLAG to a table called stat_m_table.
+stat_m_table <- table(nypd_shootings$STATISTICAL_MURDER_FLAG)
+
+#Convert the table to a pie chart to visually display label name percentages.
+stat_m_proportion <- prop.table(stat_m_table)
+stat_m_percent <- stat_m_proportion * 100
+stat_m_percent_format <- sprintf("%.1f%%", stat_m_percent)
+
+#Generate a pie chart with the label name percentages.
+pie(stat_m_table, 
+    labels = paste(names(stat_m_table), "\n", stat_m_percent_format, sep = ""), 
+    main = "Proportion of Murders", 
+    radius = 1.0)
+```
+
+<font size="4">This pie chart represents the proportions of the reported races of the shooting victims.</font>
+
+```{r, fig.width = 8, fig.height = 6, fig.align = 'center', echo = TRUE}
+#Set VIC_RACE to a table called victim_race_table.
+victim_race_table <- table(nypd_shootings$VIC_RACE)
+
+#Convert the table to a pie chart to visually display label name percentages.
+victim_race_proportion <- prop.table(victim_race_table)
+victim_race_percent <- victim_race_proportion * 100
+victim_race_percent_format <- sprintf("%.1f%%", victim_race_percent)
+
+#Generate a pie chart with the label name percentages.
+pie(victim_race_table, 
+    labels = NULL, 
+    col = rainbow(length(victim_race_table)), 
+    main = "Proportion of Victim Race", 
+    radius = 1.0)
+
+#Generate a legend for readability.
+legend("topright", 
+       legend = paste(names(victim_race_table), victim_race_percent_format), 
+       fill = rainbow(length(victim_race_table)), 
+       cex = 0.5, 
+       bty = "n")
+```
+
+<font size="4"> Below are the shootings broken down by the New York City borough in which they were reported. Brooklyn and The Bronx appear to be the more active areas for shootings over the reporting period.</font> <br>
+
+```{r, fig.width = 8, fig.height = 6, fig.align = 'center', echo = TRUE}
+#Set BORO to a table called boro_table.
+boro_table <- table(nypd_shootings$BORO)
+
+#Convert the table to a pie chart to visually display label name percentages.
+boro_proportion <- prop.table(boro_table)
+boro_percent <- boro_proportion * 100
+boro_percent_format <- sprintf("%.1f%%", boro_percent)
+
+#Generate a pie chart with the label name percentages.
+pie(boro_table, 
+    labels = paste(names(boro_table), "\n", boro_percent_format, sep = ""), 
+    main = "Proportion of Borough", 
+    radius = 1.0)
+```
+
+<font size="4"> The shooting victims' age ranges were reported and this is the pie chart representation of their distribution. There were some seemingly erroneous values that warrant further exploration. However, it's visually clear from this chart that largest age segments are the "18-24" and "25-44" categories.</font> <br>
+
+```{r, fig.width = 8, fig.height = 6, fig.align = 'center', echo = TRUE}
+#Set VIC_AGE_GROUP to a table called vic_age_table.
+vic_age_table <- table(nypd_shootings$VIC_AGE_GROUP)
+
+#Convert the table to a pie chart to visually display label name counts.
+vic_age_proportion <- prop.table(vic_age_table)
+vic_age_percent <- vic_age_proportion * 100
+vic_age_percent_format <- sprintf("%.1f%%", vic_age_percent)
+
+#Generate a pie chart with the label name percentages.
+pie(vic_age_table, 
+    labels = NULL, 
+    col = rainbow(length(vic_age_table)), 
+    main = "Proportion of Victim Age", radius = 1.0)
+
+#Generate a legend for readability.
+legend("topright", 
+       legend = paste(names(vic_age_table), vic_age_percent_format), 
+       fill = rainbow(length(vic_age_table)), 
+       cex = 0.8, 
+       bty = "n")
+```
+
+<br>
+
+<font size="4"> In the dataset, the variable VIC_SEX represents the shooting victims' reported sex. It is visually clear that males comprise the majority of reported shooting victims. </font> <br>
+
+```{r, fig.width = 8, fig.height = 6, fig.align = 'center', echo = TRUE}
+#Set VIC_SEX to a table called vic_sex_table.
+vic_sex_table <- table(nypd_shootings$VIC_SEX)
+
+#Convert the table to a pie chart to visually display label name percentages.
+vic_sex_proportion <- prop.table(vic_sex_table)
+vic_sex_percent <- vic_sex_proportion * 100
+vic_sex_percent_format <- sprintf("%.1f%%", vic_sex_percent)
+
+#Generate a pie chart with the label name percentages.
+pie(vic_sex_table, 
+    labels = paste(names(vic_sex_table), "\n", vic_sex_percent_format, sep = ""), 
+    main = "Proportion of Victim Sex", 
+    radius = 1.0)
+```
+
+<br>
+
+<h2 style="text-align: center;">
+
+**Analysis of Hour and Date of Shootings**
+
+</h2>
+
+<br>
+
+<font size="4"> To get a better sense of when these shootings have occurred, we can take a look at the OCCUR_TIME and OCCUR_DATE columns. First, let's try to analyze the OCCUR_TIME data to find any patterns of when the shootings typically occur over a 24-hour period.
+
+We can see that the shootings are at a minimum in the early morning (from roughly 7-9 AM) and gradually increase to a maximum within the 10 PM - 12 AM range before beginning a gradual descent towards the minimum. There seems to be a fairly clear cyclical pattern.</font> <br>
+
+```{r, fig.width = 8, fig.height = 6, fig.align = 'center', fig.margins = TRUE, echo = TRUE}
+#Convert OCCUR_TIME values to single hour values.
+nypd_shootings <- nypd_shootings %>%
+  mutate(hour = hour(OCCUR_TIME))
+
+#Group the shootings by the single hour values and get the count for each hour. Set the result to shoot_count_hour.
+shoot_count_hour <- nypd_shootings %>%
+  group_by(hour) %>%
+  summarise(num_shoot = n())
+
+#Plot the results of shoot_count_hour. This displays the total number of shootings per hour over the entire dataset.
+ggplot(shoot_count_hour, aes(x = factor(hour), y = num_shoot)) + 
+  geom_bar(stat = "identity", fill = "green") +
+  labs(title="Total Shootings per Hour", 
+       x = "Hour", 
+       y = "Count of Shootings") + 
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(plot.margin = unit(c(0.25,0,0.25,0), "inches"))
+```
+
+<br> <font size="4"> Now we can analyze the OCCUR_DATE column to see if there are any patterns or trends. Let's take a count of all of the shootings per date given over the reporting period. This will give us a trend of total shootings per day from 2006-2023. We can plot this to have better visual understanding of the trend.
+
+From taking a look at the visual representation of the data, one can see a cyclical pattern with an almost yearly period, suggesting the potential for seasonality. </font> <br>
+
+```{r, fig.width = 8, fig.height = 6, fig.align = 'center', fig.margins = TRUE, echo = TRUE}
+#Count the number of shootings on the same date and set to shoot_count_per_date.
+shoot_count_per_date <- nypd_shootings %>%
+  count(OCCUR_DATE)
+
+#Plot the results of shoot_count_per_date. This displays the total number of shootings per date over the entire dataset.
+ggplot(shoot_count_per_date, aes(x = OCCUR_DATE, y = n)) +
+  geom_histogram(stat = "identity", binwidth = 2, color = "black") +
+  labs(title = "Shootings by Date", 
+       x = "OCCUR_DATE", 
+       y = "Count of Shootings") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(plot.margin = unit(c(0.25,0,0.25,0), "inches"))
+```
+
+<br> <font size="4"> After color-coding the seasons to see if seasonality is a factor, there seems to be some seasonality based on the color-coded data, with some notable activity in the summer and fall months. </font> <br>
+
+```{r, fig.width = 8, fig.height = 6, fig.align = 'center', echo = TRUE}
+#Group months by season and return season string. This is to see shooting trends by season.
+season_func <- function(OCCUR_DATE) {
+     month <- month(OCCUR_DATE)
+     if (month %in% c(12, 1, 2)) {
+         return("Winter")
+     } else if (month %in% c(3,4,5)) {
+         return("Spring")
+     } else if (month %in% c(6,7,8)) {
+         return("Summer")
+     } else {
+         return("Fall")
+     }
+}
+
+#Create new column called "Season" that contains the season name for each incident, based on the incident's OCCUR_DATE. This calls the "season_func" function above
+nypd_shootings <- nypd_shootings %>%
+     mutate(Season = sapply(OCCUR_DATE, season_func))
+
+#Count shootings by season.
+shoot_count_season <- nypd_shootings %>%
+     count(OCCUR_DATE, Season)
+
+#Plot the results of shoot_count_season, with the legend placed at the bottom of the plot for readability.
+ggplot(shoot_count_season, aes(x = OCCUR_DATE, y = n, fill = Season, color = Season)) +
+     geom_histogram(stat = "identity", binwidth = 2) +
+     labs(title = "Shootings by Season",
+          x = "OCCUR_DATE",
+          y = "Count of Shootings") +
+     theme_minimal() +
+     theme(plot.title = element_text(hjust = 0.5), legend.position = "bottom", legend.title = element_blank()) +
+     theme(plot.margin = unit(c(0.25,0,0.25,0), "inches"))
+```
+
+<br>
+
+<h2 style="text-align: center;">
+
+**Linear Modeling and Time Series Predictions**
+
+</h2>
+
+<font size="4"> Now let's fit a very basic linear model to the data and plot the results. The visual results (in red) are mildly informative but generally insufficient for understanding the data. </font> <br>
+
+```{r, fig.width = 8, fig.height = 6, fig.align = 'center', echo = TRUE}
+#Generate a linear model and name it lm_model. Display the summary of the linear model.
+lm_model <- lm(n ~ OCCUR_DATE, data = shoot_count_per_date)
+summary(lm_model)
+
+#Plot the results of shoot_count_per_date and fit a built-in linear model to it.
+ggplot(shoot_count_per_date, aes(x = OCCUR_DATE, y = n)) +
+  geom_point(alpha = 0.5) + 
+  geom_smooth(method = 'lm', se = FALSE, color = "red") + 
+  labs(title = "Shootings over Time", 
+       x = "OCCUR_DATE", 
+       y = "Count of Shootings") + 
+  theme_minimal() +  
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(plot.margin = unit(c(0.25,0,0.25,0), "inches"))
+```
+
+<font size="4"> We can instead do a time series prediction to get a detailed forecast of what the data could look like in the future. This time series prediction seemed to yield more nuanced results. </font> <br>
+
+```{r, fig.width = 8, fig.height = 6, fig.align = 'center', echo = TRUE}
+#Generate a time series forecast of shoot_count_per_date, using ts with a frequency of 365 days to account for daily changes over a year, and plot the results.
+shoot_ts <- ts(shoot_count_per_date$n, frequency = 365, start = c(year(min(shoot_count_per_date$OCCUR_DATE)), 1))
+
+#Forecast shoot_ts and assign to a new variable.
+shoot_forecast_0 <- forecast(shoot_ts, h = 365)
+
+#Plot the results to show forecast.
+autoplot(shoot_forecast_0) + 
+  ggtitle("Shootings over Time with Forecast") + 
+  xlab("Dates") + 
+  ylab("Count of Shootings") + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(plot.margin = unit(c(0.25,0,0.25,0), "inches"))
+
+```
+
+<h2 style="text-align: center;">
+
+**Sources of Bias**
+
+</h2>
+
+<font size="4"> After spending time doing analysis and modeling of the data, a few areas stuck out to me as potential sources of bias:
+
+-   STATISTICAL_MURDER_FLAG as a TRUE/FALSE value. What counts as a "murder" in this context? Is it simply what the NYPD reported at the scene of the incident and at the time of reporting? Is it possible that incidents reported as "FALSE" (no murder) ended up being TRUE (meaning death as a result of murder) after a period of time? This possibility doesn't seem to be accounted for. Is it possible that a death was initially reported as a murder but ended up actually being investigated as an act of involuntary manslaughter? Does the word word "murder" include self-inflicted murder (i.e. suicide)? The STATISTICAL_MURDER_FLAG variable does not capture very much nuance relative to these questions and therefore can be considered a potential source of bias.
+
+-   The VIC_AGE variable provides age ranges of different lengths, so it's important to keep this in mind when looking at patterns in the age distributions. An example with our dataset would be that the largest segment of shooting victims is in the 25-44 range, but the size of this segment could be a function of the number of people that the 25-44 age range covers, not necessarily of the unique proclivity of individuals in that age range to become victims in a shooting. The 18-24 age range is a smaller age window and might be why the shooting frequency is relatively smaller. It's also important to note that VIC_AGE values appear to be a "subjective" guesses of age and not a value that is confirmed through identification, which provides another source of uncertainty in the validity of the data.
+
+-   BORO shooting counts might be misleading for a similar reason to VIC_AGE, in the sense that the New York City boroughs in which the shootings were reported are of varying sizes and could distort our understanding of the pie chart distributions, as the pie charts don't account for this difference.
+
+<h2 style="text-align: center;">
+
+**Personal Bias and Bias Mitigation**
+
+</h2>
+
+The listed items in "Sources of Bias" can be considered personal points of bias. The "VIC_SEX" pie chart showing such a high reported number of male shooting victims is another potential source of bias because it can be tempting to make assumptions (e.g. that males are simply more violent) or guesses on these results without conducting more research. With these analyses and subsequent models, I attempt to mitigate potential sources of bias by:
+
+-   Continuing to ask questions around the the potential sources of bias in the data, its analyses and models. I try to be mindful of whether the splitting up of observations into categorical variables is going to provide meaningful results when analyzed with a dependent variable.
+
+-   Not confusing correlation with causation. Just because a variable is correlated with a certain outcome doesn't necessarily mean there's a causal relationship between the two.
+
+-   Understanding that models, especially linear models, are extremely rough approximations to a highly complex reality. It's important to not place too much weight on the results of models, as they can often make very incorrect predictions. </font><br>
+
+<h2 style="text-align: center;">
+
+**Thank you!**
+
+</h2>
+
+<br>
